@@ -1,3 +1,4 @@
+import hmac
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -5,13 +6,14 @@ from decimal import Decimal
 from uuid import UUID
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.catalog_client import catalog_client
+from app.config import settings
 from app.database import get_db
 from app.models import (
     Deal,
@@ -34,6 +36,11 @@ from app.security import get_user_id
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="LEGO Marketplace Deals Service", version="0.4.0")
+
+
+def require_service_token(service_token: str | None) -> None:
+    if not service_token or not hmac.compare_digest(service_token, settings.service_token):
+        raise HTTPException(status_code=401, detail="Недействительный сервисный токен")
 
 
 async def fetch_listing(listing_id: UUID) -> dict:
@@ -164,6 +171,50 @@ async def load_deal(db: AsyncSession, deal_id: UUID, for_update: bool = False) -
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": "deals"}
+
+
+@app.get("/internal/deals/{deal_id}/payment")
+async def internal_payment_context(
+    deal_id: UUID,
+    x_service_token: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    require_service_token(x_service_token)
+    deal = await db.get(Deal, deal_id)
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    return {
+        "id": str(deal.id),
+        "buyer_id": str(deal.buyer_id),
+        "seller_id": str(deal.seller_id),
+        "amount": str(deal.agreed_price),
+        "transaction_type": deal.transaction_type.value,
+        "status": deal.status.value,
+    }
+
+
+@app.post("/internal/deals/{deal_id}/payment-authorized")
+async def internal_payment_authorized(
+    deal_id: UUID,
+    x_service_token: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    require_service_token(x_service_token)
+    deal = await load_deal(db, deal_id, for_update=True)
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    if deal.transaction_type != TransactionType.ONLINE_PROTECTED:
+        raise HTTPException(status_code=409, detail="Для этой сделки онлайн-оплата недоступна")
+    if deal.status == DealStatus.PAID:
+        return {"deal_id": str(deal.id), "status": deal.status.value}
+    if deal.status != DealStatus.AWAITING_PAYMENT:
+        raise HTTPException(status_code=409, detail="Сделка больше не ожидает оплату")
+
+    previous_status = deal.status
+    deal.status = DealStatus.PAID
+    append_history(deal, deal.buyer_id, previous_status, "Платеж авторизован")
+    await db.commit()
+    return {"deal_id": str(deal.id), "status": deal.status.value}
 
 
 @app.post("/offers", response_model=OfferResponse, status_code=status.HTTP_201_CREATED)

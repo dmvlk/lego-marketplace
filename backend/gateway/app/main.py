@@ -12,6 +12,7 @@ app = FastAPI(
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8001").rstrip("/")
 CATALOG_SERVICE_URL = os.getenv("CATALOG_SERVICE_URL", "http://catalog-service:8002").rstrip("/")
 DEALS_SERVICE_URL = os.getenv("DEALS_SERVICE_URL", "http://deals-service:8003").rstrip("/")
+PAYMENT_SERVICE_URL = os.getenv("PAYMENT_SERVICE_URL", "http://payment-service:8004").rstrip("/")
 
 app.add_middleware(
     CORSMiddleware,
@@ -250,3 +251,45 @@ async def deals_confirm_offline_proxy(request: Request, deal_id: str) -> Respons
 @app.post("/api/v1/deals/{deal_id}/cancel")
 async def deals_cancel_proxy(request: Request, deal_id: str) -> Response:
     return await proxy_deals(request, f"/deals/{deal_id}/cancel")
+
+
+async def proxy_payments(request: Request, path: str) -> Response:
+    headers = {}
+    for header in (
+        "authorization",
+        "content-type",
+        "accept",
+        "idempotency-key",
+        "x-provider-signature",
+    ):
+        if value := request.headers.get(header):
+            headers[header.title()] = value
+    body = await request.body()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        upstream = await client.request(
+            request.method,
+            f"{PAYMENT_SERVICE_URL}{path}",
+            content=body,
+            headers=headers,
+            params=request.query_params,
+        )
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
+@app.post("/api/v1/payments/deals/{deal_id}")
+async def payments_start_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_payments(request, f"/payments/deals/{deal_id}")
+
+
+@app.post("/api/v1/payments/webhooks/{provider_name}")
+async def payments_webhook_proxy(request: Request, provider_name: str) -> Response:
+    return await proxy_payments(request, f"/payments/webhooks/{provider_name}")
+
+
+@app.get("/api/v1/payments/{payment_id}")
+async def payments_get_proxy(request: Request, payment_id: str) -> Response:
+    return await proxy_payments(request, f"/payments/{payment_id}")

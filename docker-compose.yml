@@ -39,6 +39,30 @@ services:
       timeout: 5s
       retries: 20
 
+  payment-service:
+    build:
+      context: ./backend/payment-service
+    environment:
+      DATABASE_URL: postgresql+asyncpg://lego:lego_password@postgres:5432/payment_db
+      JWT_SECRET: ${JWT_SECRET:-replace-with-a-long-random-secret}
+      DEALS_SERVICE_URL: http://deals-service:8003
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-replace-with-a-long-random-service-token}
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-replace-with-a-long-random-payment-webhook-secret}
+      PLATFORM_FEE_PERCENT: ${PLATFORM_FEE_PERCENT:-5}
+      PAYMENT_CURRENCY: ${PAYMENT_CURRENCY:-RUB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      deals-service:
+        condition: service_healthy
+    ports:
+      - "8004:8004"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8004/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   rabbitmq:
     image: rabbitmq:3-management-alpine
     environment:
@@ -91,6 +115,7 @@ services:
       AUTH_SERVICE_URL: http://auth-service:8001
       CATALOG_SERVICE_URL: http://catalog-service:8002
       DEALS_SERVICE_URL: http://deals-service:8003
+      PAYMENT_SERVICE_URL: http://payment-service:8004
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,6 +128,8 @@ services:
       catalog-service:
         condition: service_healthy
       deals-service:
+        condition: service_healthy
+      payment-service:
         condition: service_healthy
     ports:
       - "8000:8000"
