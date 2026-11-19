@@ -113,3 +113,37 @@ docker compose ps
 - повторное использование старого refresh-токена отклоняется;
 - выход отзывает refresh-токен;
 - маршрутизация через Gateway на порту `8000`.
+
+## Сервис каталога
+
+Добавлен независимый `catalog-service` с базой `catalog_db`:
+
+- категории, темы и объявления;
+- описание состояния и комплектности LEGO;
+- цена хранится в `NUMERIC`, не во float;
+- поиск по названию, фильтры по категории, теме, состоянию и цене;
+- сортировка по дате и цене, пагинация;
+- избранное с защитой от повторного добавления;
+- редактирование и архивирование только своего объявления;
+- проверка допустимого статуса перед изменением;
+- загрузка до 10 изображений на объявление;
+- проверка формата JPEG/PNG/WebP, размера до 5 МБ и разрешения;
+- хранение изображений в S3 через LocalStack;
+- просмотр и удаление изображения через Gateway.
+
+При первой миграции создаются три категории и темы City, Star Wars, Technic, NINJAGO, Creator, Friends и Architecture.
+
+Основные публичные маршруты:
+
+- `GET /api/v1/catalog/categories`.
+- `GET /api/v1/catalog/themes`.
+- `GET /api/v1/catalog/listings`.
+- `GET /api/v1/catalog/favorites`.
+- `POST /api/v1/catalog/listings`.
+- `GET`, `PATCH`, `DELETE /api/v1/catalog/listings/{id}`.
+- `POST /api/v1/catalog/listings/{id}/images`.
+- `GET /api/v1/catalog/images/{key}`.
+- `DELETE /api/v1/catalog/listings/{id}/images/{image_id}`.
+- `POST`, `DELETE /api/v1/catalog/listings/{id}/favorites`.
+
+Интеграционный тест проверяет создание объявления и фото, поиск, избранное, ограничения доступа и архивирование.
