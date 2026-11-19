@@ -1,4 +1,16 @@
+from datetime import datetime, timedelta
+
 from app.models import DealStatus, TransactionType
+
+
+def add_business_days(start: datetime, days: int) -> datetime:
+    deadline = start
+    added_days = 0
+    while added_days < days:
+        deadline += timedelta(days=1)
+        if deadline.weekday() < 5:
+            added_days += 1
+    return deadline
 
 
 def initial_status(transaction_type: TransactionType) -> DealStatus:

@@ -1,6 +1,8 @@
 import asyncio
 import hmac
+import io
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
@@ -8,9 +10,12 @@ from decimal import Decimal
 from uuid import UUID
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from botocore.exceptions import BotoCoreError, ClientError
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,6 +28,13 @@ from app.models import (
     DealPayoutOutbox,
     DealStatus,
     DealStatusHistory,
+    Dispute,
+    DisputeAuditLog,
+    DisputeDecision,
+    DisputeEvidence,
+    DisputeResolutionOutbox,
+    DisputeStatus,
+    EvidenceType,
     Offer,
     OfferStatus,
     TransactionType,
@@ -32,14 +44,23 @@ from app.schemas import (
     CounterOfferCreate,
     DealCreate,
     DealResponse,
+    DisputeAuditResponse,
+    DisputeCreate,
+    DisputeEvidenceResponse,
+    DisputeRequestEvidence,
+    DisputeResolve,
+    DisputeResponse,
+    EvidenceCreate,
     OfferCreate,
     OfferResponse,
     ShipmentEventRequest,
 )
-from app.rules import can_cancel, initial_status, offline_complete
-from app.security import get_user_id
+from app.rules import add_business_days, can_cancel, initial_status, offline_complete
+from app.security import decode_authorization, get_admin_id, get_user_id
+from app.storage import delete_image, get_image, upload_image
 
 logger = logging.getLogger(__name__)
+IMAGE_KEY_PATTERN = re.compile(r"disputes/[0-9a-f-]{36}/[0-9a-f]{32}\.(jpg|png|webp)")
 
 
 @asynccontextmanager
@@ -186,6 +207,98 @@ async def load_deal(db: AsyncSession, deal_id: UUID, for_update: bool = False) -
     return result.scalar_one_or_none()
 
 
+async def load_dispute(
+    db: AsyncSession,
+    dispute_id: UUID,
+    for_update: bool = False,
+) -> Dispute | None:
+    statement = (
+        select(Dispute)
+        .options(selectinload(Dispute.evidence))
+        .where(Dispute.id == dispute_id)
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    result = await db.execute(statement)
+    return result.scalar_one_or_none()
+
+
+def dispute_response(dispute: Dispute) -> DisputeResponse:
+    return DisputeResponse(
+        id=dispute.id,
+        deal_id=dispute.deal_id,
+        opened_by=dispute.opened_by,
+        reason=dispute.reason,
+        description=dispute.description,
+        status=dispute.status,
+        response_due_at=dispute.response_due_at,
+        deadline_missed_at=dispute.deadline_missed_at,
+        resolution=dispute.resolution,
+        refund_amount=dispute.refund_amount,
+        resolved_by=dispute.resolved_by,
+        resolved_at=dispute.resolved_at,
+        resolution_note=dispute.resolution_note,
+        created_at=dispute.created_at,
+        evidence=[
+            DisputeEvidenceResponse(
+                id=item.id,
+                submitted_by=item.submitted_by,
+                evidence_type=item.evidence_type,
+                content=item.content,
+                created_at=item.created_at,
+                image_url=(
+                    f"/api/v1/disputes/{dispute.id}/evidence/{item.id}/image"
+                    if item.image_key
+                    else None
+                ),
+            )
+            for item in dispute.evidence
+        ],
+    )
+
+
+async def require_dispute_participant(
+    db: AsyncSession,
+    dispute: Dispute,
+    user_id: UUID,
+) -> Deal:
+    deal = await db.get(Deal, dispute.deal_id)
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    if user_id not in {deal.buyer_id, deal.seller_id}:
+        raise HTTPException(status_code=403, detail="Нет доступа к этому спору")
+    return deal
+
+
+def register_dispute_evidence(
+    db: AsyncSession,
+    dispute: Dispute,
+    deal: Deal,
+    user_id: UUID,
+    evidence: DisputeEvidence,
+) -> None:
+    if dispute.status in {DisputeStatus.RESOLVING, DisputeStatus.RESOLVED}:
+        raise HTTPException(status_code=409, detail="К спору больше нельзя добавить доказательства")
+    dispute.evidence.append(evidence)
+    if (
+        dispute.status == DisputeStatus.WAITING_SELLER
+        and user_id == deal.seller_id
+    ) or (
+        dispute.status == DisputeStatus.WAITING_BUYER
+        and user_id == deal.buyer_id
+    ):
+        dispute.status = DisputeStatus.UNDER_REVIEW
+        dispute.response_due_at = None
+        dispute.deadline_missed_at = None
+    add_dispute_audit(
+        db,
+        dispute.id,
+        user_id,
+        "evidence_submitted",
+        {"evidence_type": evidence.evidence_type.value},
+    )
+
+
 async def ensure_payout_outbox(db: AsyncSession, deal: Deal) -> None:
     result = await db.execute(
         select(DealPayoutOutbox).where(DealPayoutOutbox.deal_id == deal.id)
@@ -269,13 +382,180 @@ async def process_payout_outbox() -> None:
             await db.commit()
 
 
+def add_dispute_audit(
+    db: AsyncSession,
+    dispute_id: UUID,
+    actor_id: UUID | None,
+    action: str,
+    details: dict,
+) -> None:
+    db.add(
+        DisputeAuditLog(
+            dispute_id=dispute_id,
+            actor_id=actor_id,
+            action=action,
+            details=details,
+        )
+    )
+
+
+async def complete_due_dispute_deadlines() -> None:
+    now = datetime.now(timezone.utc)
+    async with SessionFactory() as db:
+        result = await db.execute(
+            select(Dispute)
+            .where(
+                Dispute.status.in_([DisputeStatus.WAITING_SELLER, DisputeStatus.WAITING_BUYER]),
+                Dispute.response_due_at <= now,
+            )
+            .order_by(Dispute.response_due_at)
+            .limit(100)
+            .with_for_update(skip_locked=True)
+        )
+        disputes = result.scalars().all()
+        for dispute in disputes:
+            previous_status = dispute.status
+            dispute.status = DisputeStatus.UNDER_REVIEW
+            dispute.deadline_missed_at = now
+            dispute.response_due_at = None
+            add_dispute_audit(
+                db,
+                dispute.id,
+                None,
+                "response_deadline_expired",
+                {"waiting_for": previous_status.value},
+            )
+        if disputes:
+            await db.commit()
+
+
+async def process_dispute_resolution_outbox() -> None:
+    now = datetime.now(timezone.utc)
+    async with SessionFactory() as db:
+        result = await db.execute(
+            select(DisputeResolutionOutbox)
+            .where(
+                DisputeResolutionOutbox.completed_at.is_(None),
+                DisputeResolutionOutbox.next_attempt_at <= now,
+            )
+            .order_by(DisputeResolutionOutbox.next_attempt_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        actions = result.scalars().all()
+        for action in actions:
+            dispute = await db.get(Dispute, action.dispute_id)
+            deal = await load_deal(db, dispute.deal_id, for_update=True) if dispute else None
+            try:
+                if (
+                    dispute is None
+                    or deal is None
+                    or dispute.status != DisputeStatus.RESOLVING
+                    or dispute.resolved_by is None
+                ):
+                    raise RuntimeError("Dispute resolution state is inconsistent")
+
+                if action.decision in {
+                    DisputeDecision.REFUND_BUYER,
+                    DisputeDecision.PARTIAL_REFUND,
+                }:
+                    await payment_client.refund(
+                        str(deal.id),
+                        f"dispute-refund-{dispute.id}",
+                        dispute.resolution_note or "Решение по спору",
+                        str(action.refund_amount) if action.refund_amount is not None else None,
+                    )
+
+                if action.decision == DisputeDecision.REFUND_BUYER:
+                    await catalog_action("release", deal.listing_id, deal.id)
+                    if deal.status != DealStatus.DISPUTED:
+                        raise RuntimeError("Deal left disputed state before refund completion")
+                    previous_status = deal.status
+                    deal.status = DealStatus.CANCELLED
+                    append_history(
+                        deal,
+                        dispute.resolved_by,
+                        previous_status,
+                        "Администратор решил спор в пользу покупателя",
+                    )
+                else:
+                    if deal.status == DealStatus.DISPUTED:
+                        previous_status = deal.status
+                        deal.status = DealStatus.COMPLETED
+                        deal.completed_at = now
+                        append_history(
+                            deal,
+                            dispute.resolved_by,
+                            previous_status,
+                            "Администратор решил спор в пользу продавца"
+                            if action.decision == DisputeDecision.PAY_SELLER
+                            else "Администратор назначил частичный возврат",
+                        )
+                        action.next_attempt_at = now + timedelta(seconds=10)
+                        action.last_error = None
+                        await db.commit()
+                        continue
+                    if deal.status != DealStatus.COMPLETED:
+                        raise RuntimeError("Deal left disputed state before payout")
+                    await catalog_action("sold", deal.listing_id, deal.id)
+                    await payment_client.release_payout(
+                        str(deal.id),
+                        f"dispute-payout-{dispute.id}",
+                    )
+
+                dispute.status = DisputeStatus.RESOLVED
+                dispute.resolved_at = now
+                action.completed_at = now
+                action.last_error = None
+                add_dispute_audit(
+                    db,
+                    dispute.id,
+                    dispute.resolved_by,
+                    "resolution_completed",
+                    {
+                        "decision": action.decision.value,
+                        "refund_amount": str(action.refund_amount)
+                        if action.refund_amount is not None
+                        else None,
+                    },
+                )
+            except (HTTPException, httpx.HTTPStatusError, httpx.RequestError, RuntimeError) as error:
+                action.attempt_count += 1
+                delay = min(60 * 2 ** min(action.attempt_count, 6), 3600)
+                action.next_attempt_at = now + timedelta(seconds=delay)
+                if isinstance(error, HTTPException):
+                    action.last_error = f"HTTP {error.status_code}: {error.detail}"[:300]
+                    logger.error(
+                        "Dispute %s resolution failed: HTTP %s",
+                        action.dispute_id,
+                        error.status_code,
+                    )
+                elif isinstance(error, httpx.HTTPStatusError):
+                    action.last_error = f"HTTP {error.response.status_code}"
+                    logger.error(
+                        "Payment service returned %s while resolving dispute %s",
+                        error.response.status_code,
+                        action.dispute_id,
+                    )
+                elif isinstance(error, httpx.RequestError):
+                    action.last_error = "Dependent service unavailable"
+                    logger.exception("Service unavailable while resolving dispute %s", action.dispute_id)
+                else:
+                    action.last_error = str(error)[:300]
+                    logger.error("Dispute %s resolution state is inconsistent", action.dispute_id)
+        if actions:
+            await db.commit()
+
+
 async def inspection_worker() -> None:
     while True:
         try:
             await complete_due_inspections()
+            await complete_due_dispute_deadlines()
             await process_payout_outbox()
+            await process_dispute_resolution_outbox()
         except SQLAlchemyError:
-            logger.exception("Inspection worker database operation failed")
+            logger.exception("Deals background worker database operation failed")
         await asyncio.sleep(10)
 
 
@@ -620,6 +900,14 @@ async def confirm_inspection(
         await ensure_payout_outbox(db, deal)
         await db.commit()
     elif deal.status == DealStatus.COMPLETED:
+        active_dispute = await db.scalar(
+            select(Dispute.id).where(
+                Dispute.deal_id == deal.id,
+                Dispute.status != DisputeStatus.RESOLVED,
+            )
+        )
+        if active_dispute is not None:
+            raise HTTPException(status_code=409, detail="Спор по сделке еще не разрешен")
         await ensure_payout_outbox(db, deal)
         await db.commit()
     else:
@@ -627,6 +915,350 @@ async def confirm_inspection(
 
     await process_payout_outbox()
     return await load_deal(db, deal.id)
+
+
+@app.post(
+    "/deals/{deal_id}/disputes",
+    response_model=DisputeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def open_dispute(
+    deal_id: UUID,
+    payload: DisputeCreate,
+    user_id: UUID = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    deal = await load_deal(db, deal_id, for_update=True)
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    if user_id != deal.buyer_id:
+        raise HTTPException(status_code=403, detail="Открыть спор может только покупатель")
+    if deal.transaction_type != TransactionType.ONLINE_PROTECTED:
+        raise HTTPException(status_code=409, detail="Спор доступен только для защищенной сделки")
+    if deal.status not in {DealStatus.PAID, DealStatus.SHIPPED, DealStatus.INSPECTION}:
+        raise HTTPException(status_code=409, detail="Сделку нельзя оспорить в текущем статусе")
+    now = datetime.now(timezone.utc)
+    if (
+        deal.status == DealStatus.INSPECTION
+        and deal.inspection_deadline_at is not None
+        and deal.inspection_deadline_at <= now
+    ):
+        raise HTTPException(status_code=409, detail="Срок осмотра уже завершен")
+
+    previous_status = deal.status
+    deal.status = DealStatus.DISPUTED
+    append_history(deal, user_id, previous_status, "Покупатель открыл спор")
+    dispute = Dispute(
+        deal_id=deal.id,
+        opened_by=user_id,
+        reason=payload.reason,
+        description=payload.description,
+        status=DisputeStatus.WAITING_SELLER,
+        response_due_at=add_business_days(now, 2),
+    )
+    db.add(dispute)
+    try:
+        await db.flush()
+        add_dispute_audit(
+            db,
+            dispute.id,
+            user_id,
+            "dispute_opened",
+            {"reason": payload.reason.value},
+        )
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="По этой сделке уже открыт спор")
+    loaded = await load_dispute(db, dispute.id)
+    return dispute_response(loaded)
+
+
+@app.get("/disputes/{dispute_id}", response_model=DisputeResponse)
+async def get_dispute(
+    dispute_id: UUID,
+    user_id: UUID = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    dispute = await load_dispute(db, dispute_id)
+    if dispute is None:
+        raise HTTPException(status_code=404, detail="Спор не найден")
+    await require_dispute_participant(db, dispute, user_id)
+    return dispute_response(dispute)
+
+
+@app.post(
+    "/disputes/{dispute_id}/evidence",
+    response_model=DisputeEvidenceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_dispute_evidence(
+    dispute_id: UUID,
+    payload: EvidenceCreate,
+    user_id: UUID = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    dispute = await load_dispute(db, dispute_id, for_update=True)
+    if dispute is None:
+        raise HTTPException(status_code=404, detail="Спор не найден")
+    deal = await require_dispute_participant(db, dispute, user_id)
+    evidence = DisputeEvidence(
+        submitted_by=user_id,
+        evidence_type=payload.evidence_type,
+        content=payload.content,
+    )
+    register_dispute_evidence(db, dispute, deal, user_id, evidence)
+    await db.commit()
+    await db.refresh(evidence)
+    return DisputeEvidenceResponse.model_validate(evidence)
+
+
+@app.post(
+    "/disputes/{dispute_id}/evidence/images",
+    response_model=DisputeEvidenceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_dispute_image(
+    dispute_id: UUID,
+    file: UploadFile = File(...),
+    description: str = Form(default="", max_length=5000),
+    user_id: UUID = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    dispute = await load_dispute(db, dispute_id, for_update=True)
+    if dispute is None:
+        raise HTTPException(status_code=404, detail="Спор не найден")
+    deal = await require_dispute_participant(db, dispute, user_id)
+    if dispute.status in {DisputeStatus.RESOLVING, DisputeStatus.RESOLVED}:
+        raise HTTPException(status_code=409, detail="К спору больше нельзя добавить доказательства")
+
+    data = await file.read(settings.max_image_size_bytes + 1)
+    if len(data) > settings.max_image_size_bytes:
+        raise HTTPException(status_code=413, detail="Размер фото не должен превышать 5 МБ")
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image_format = image.format
+            width, height = image.size
+            image.verify()
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(status_code=415, detail="Файл не является корректным изображением")
+    if image_format not in {"JPEG", "PNG", "WEBP"}:
+        raise HTTPException(status_code=415, detail="Поддерживаются только JPEG, PNG и WebP")
+    if width > 10000 or height > 10000 or width * height > 25_000_000:
+        raise HTTPException(status_code=413, detail="Слишком большое разрешение фото")
+
+    extension, content_type = {
+        "JPEG": ("jpg", "image/jpeg"),
+        "PNG": ("png", "image/png"),
+        "WEBP": ("webp", "image/webp"),
+    }[image_format]
+    key = f"disputes/{dispute.id}/{uuid.uuid4().hex}.{extension}"
+    try:
+        await asyncio.to_thread(upload_image, key, data, content_type)
+    except (BotoCoreError, ClientError):
+        logger.exception("Failed to upload dispute evidence image")
+        raise HTTPException(status_code=503, detail="Не удалось сохранить фото")
+
+    evidence = DisputeEvidence(
+        submitted_by=user_id,
+        evidence_type=EvidenceType.IMAGE,
+        content=description,
+        image_key=key,
+    )
+    register_dispute_evidence(db, dispute, deal, user_id, evidence)
+    try:
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        try:
+            await asyncio.to_thread(delete_image, key)
+        except (BotoCoreError, ClientError):
+            logger.exception("Failed to remove orphaned dispute evidence image")
+        logger.exception("Failed to save dispute image evidence")
+        raise HTTPException(status_code=500, detail="Не удалось сохранить доказательство")
+    await db.refresh(evidence)
+    return DisputeEvidenceResponse(
+        id=evidence.id,
+        submitted_by=evidence.submitted_by,
+        evidence_type=evidence.evidence_type,
+        content=evidence.content,
+        created_at=evidence.created_at,
+        image_url=f"/api/v1/disputes/{dispute.id}/evidence/{evidence.id}/image",
+    )
+
+
+@app.get("/disputes/{dispute_id}/evidence/{evidence_id}/image")
+async def get_dispute_evidence_image(
+    dispute_id: UUID,
+    evidence_id: UUID,
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    payload = decode_authorization(authorization)
+    try:
+        user_id = UUID(payload["sub"])
+    except (KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Недействительный токен")
+
+    dispute = await load_dispute(db, dispute_id)
+    if dispute is None:
+        raise HTTPException(status_code=404, detail="Спор не найден")
+    deal = await db.get(Deal, dispute.deal_id)
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    if payload.get("role") != "ADMIN" and user_id not in {deal.buyer_id, deal.seller_id}:
+        raise HTTPException(status_code=403, detail="Нет доступа к этому спору")
+    evidence = await db.get(DisputeEvidence, evidence_id)
+    if (
+        evidence is None
+        or evidence.dispute_id != dispute.id
+        or evidence.image_key is None
+        or IMAGE_KEY_PATTERN.fullmatch(evidence.image_key) is None
+    ):
+        raise HTTPException(status_code=404, detail="Фото не найдено")
+    try:
+        image = await asyncio.to_thread(get_image, evidence.image_key)
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        if code in {"NoSuchKey", "404", "NotFound"}:
+            raise HTTPException(status_code=404, detail="Фото не найдено")
+        logger.exception("Failed to read dispute evidence image")
+        raise HTTPException(status_code=503, detail="Не удалось загрузить фото")
+    except BotoCoreError:
+        logger.exception("Failed to read dispute evidence image")
+        raise HTTPException(status_code=503, detail="Не удалось загрузить фото")
+    return Response(
+        content=image["Body"].read(),
+        media_type=image.get("ContentType", "application/octet-stream"),
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@app.get("/admin/disputes", response_model=list[DisputeResponse])
+async def list_disputes(
+    dispute_status: DisputeStatus | None = Query(default=None, alias="status"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    admin_id: UUID = Depends(get_admin_id),
+    db: AsyncSession = Depends(get_db),
+):
+    statement = select(Dispute).options(selectinload(Dispute.evidence))
+    if dispute_status is not None:
+        statement = statement.where(Dispute.status == dispute_status)
+    result = await db.execute(
+        statement.order_by(Dispute.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return [dispute_response(item) for item in result.scalars().all()]
+
+
+@app.get("/admin/disputes/{dispute_id}/audit", response_model=list[DisputeAuditResponse])
+async def get_dispute_audit(
+    dispute_id: UUID,
+    admin_id: UUID = Depends(get_admin_id),
+    db: AsyncSession = Depends(get_db),
+):
+    if await db.get(Dispute, dispute_id) is None:
+        raise HTTPException(status_code=404, detail="Спор не найден")
+    result = await db.execute(
+        select(DisputeAuditLog)
+        .where(DisputeAuditLog.dispute_id == dispute_id)
+        .order_by(DisputeAuditLog.created_at)
+    )
+    return result.scalars().all()
+
+
+@app.post("/admin/disputes/{dispute_id}/request-evidence", response_model=DisputeResponse)
+async def request_dispute_evidence(
+    dispute_id: UUID,
+    payload: DisputeRequestEvidence,
+    admin_id: UUID = Depends(get_admin_id),
+    db: AsyncSession = Depends(get_db),
+):
+    dispute = await load_dispute(db, dispute_id, for_update=True)
+    if dispute is None:
+        raise HTTPException(status_code=404, detail="Спор не найден")
+    if dispute.status in {DisputeStatus.RESOLVING, DisputeStatus.RESOLVED}:
+        raise HTTPException(status_code=409, detail="Спор уже разрешается или закрыт")
+    deal = await db.get(Deal, dispute.deal_id)
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+
+    if payload.participant == "buyer":
+        dispute.status = DisputeStatus.WAITING_BUYER
+    else:
+        dispute.status = DisputeStatus.WAITING_SELLER
+    dispute.response_due_at = add_business_days(datetime.now(timezone.utc), 2)
+    dispute.deadline_missed_at = None
+    add_dispute_audit(
+        db,
+        dispute.id,
+        admin_id,
+        "evidence_requested",
+        {"participant": payload.participant, "note": payload.note},
+    )
+    await db.commit()
+    return dispute_response(await load_dispute(db, dispute.id))
+
+
+@app.post(
+    "/admin/disputes/{dispute_id}/resolve",
+    response_model=DisputeResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def resolve_dispute(
+    dispute_id: UUID,
+    payload: DisputeResolve,
+    admin_id: UUID = Depends(get_admin_id),
+    db: AsyncSession = Depends(get_db),
+):
+    dispute = await load_dispute(db, dispute_id, for_update=True)
+    if dispute is None:
+        raise HTTPException(status_code=404, detail="Спор не найден")
+    if dispute.status in {DisputeStatus.RESOLVING, DisputeStatus.RESOLVED}:
+        raise HTTPException(status_code=409, detail="Спор уже разрешается или закрыт")
+    deal = await load_deal(db, dispute.deal_id, for_update=True)
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    if deal.status != DealStatus.DISPUTED:
+        raise HTTPException(status_code=409, detail="Сделка больше не находится в споре")
+    if (
+        payload.decision == DisputeDecision.PARTIAL_REFUND
+        and payload.refund_amount >= deal.agreed_price
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Частичный возврат должен быть меньше суммы сделки",
+        )
+
+    dispute.status = DisputeStatus.RESOLVING
+    dispute.resolution = payload.decision
+    dispute.refund_amount = payload.refund_amount
+    dispute.resolved_by = admin_id
+    dispute.resolution_note = payload.note
+    db.add(
+        DisputeResolutionOutbox(
+            dispute_id=dispute.id,
+            decision=payload.decision,
+            refund_amount=payload.refund_amount,
+        )
+    )
+    add_dispute_audit(
+        db,
+        dispute.id,
+        admin_id,
+        "resolution_started",
+        {
+            "decision": payload.decision.value,
+            "refund_amount": str(payload.refund_amount)
+            if payload.refund_amount is not None
+            else None,
+            "note": payload.note,
+        },
+    )
+    await db.commit()
+    return dispute_response(await load_dispute(db, dispute.id))
 
 
 @app.get("/deals/{deal_id}", response_model=DealResponse)

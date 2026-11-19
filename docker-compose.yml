@@ -28,10 +28,17 @@ services:
       SERVICE_TOKEN: ${SERVICE_TOKEN:-replace-with-a-long-random-service-token}
       PAYMENT_SERVICE_URL: http://payment-service:8004
       INSPECTION_PERIOD_HOURS: ${INSPECTION_PERIOD_HOURS:-48}
+      S3_ENDPOINT_URL: http://minio:4566
+      S3_BUCKET: lego-marketplace-images
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY: test
+      S3_SECRET_KEY: test
     depends_on:
       postgres:
         condition: service_healthy
       catalog-service:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     ports:
       - "8003:8003"

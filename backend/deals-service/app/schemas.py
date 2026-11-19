@@ -1,10 +1,19 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models import DealStatus, OfferStatus, TransactionType
+from app.models import (
+    DealStatus,
+    DisputeDecision,
+    DisputeReason,
+    DisputeStatus,
+    EvidenceType,
+    OfferStatus,
+    TransactionType,
+)
 
 
 class OfferCreate(BaseModel):
@@ -70,3 +79,73 @@ class DealResponse(BaseModel):
     snapshot: DealSnapshotResponse
     inspection_deadline_at: datetime | None
     shipment_id: UUID | None
+
+
+class DisputeCreate(BaseModel):
+    reason: DisputeReason
+    description: str = Field(min_length=10, max_length=5000)
+
+
+class EvidenceCreate(BaseModel):
+    evidence_type: Literal[EvidenceType.TEXT, EvidenceType.MESSAGE, EvidenceType.TRACKING]
+    content: str = Field(min_length=1, max_length=5000)
+
+
+class DisputeEvidenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    submitted_by: UUID
+    evidence_type: EvidenceType
+    content: str
+    created_at: datetime
+    image_url: str | None = None
+
+
+class DisputeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    deal_id: UUID
+    opened_by: UUID
+    reason: DisputeReason
+    description: str
+    status: DisputeStatus
+    response_due_at: datetime | None
+    deadline_missed_at: datetime | None
+    resolution: DisputeDecision | None
+    refund_amount: Decimal | None
+    resolved_by: UUID | None
+    resolved_at: datetime | None
+    resolution_note: str | None
+    created_at: datetime
+    evidence: list[DisputeEvidenceResponse]
+
+
+class DisputeRequestEvidence(BaseModel):
+    participant: Literal["buyer", "seller"]
+    note: str = Field(min_length=1, max_length=2000)
+
+
+class DisputeResolve(BaseModel):
+    decision: DisputeDecision
+    refund_amount: Decimal | None = Field(default=None, gt=0, decimal_places=2)
+    note: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def validate_refund_amount(self):
+        if self.decision == DisputeDecision.PARTIAL_REFUND and self.refund_amount is None:
+            raise ValueError("Для частичного возврата укажите сумму")
+        if self.decision != DisputeDecision.PARTIAL_REFUND and self.refund_amount is not None:
+            raise ValueError("Сумма допустима только для частичного возврата")
+        return self
+
+
+class DisputeAuditResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    actor_id: UUID | None
+    action: str
+    details: dict
+    created_at: datetime

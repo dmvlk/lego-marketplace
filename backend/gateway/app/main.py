@@ -274,6 +274,58 @@ async def deals_inspection_confirm_proxy(request: Request, deal_id: str) -> Resp
     return await proxy_deals(request, f"/deals/{deal_id}/inspection/confirm")
 
 
+@app.post("/api/v1/deals/{deal_id}/disputes")
+async def disputes_open_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_deals(request, f"/deals/{deal_id}/disputes")
+
+
+@app.get("/api/v1/disputes/{dispute_id}")
+async def disputes_detail_proxy(request: Request, dispute_id: str) -> Response:
+    return await proxy_deals(request, f"/disputes/{dispute_id}")
+
+
+@app.post("/api/v1/disputes/{dispute_id}/evidence")
+async def disputes_evidence_proxy(request: Request, dispute_id: str) -> Response:
+    return await proxy_deals(request, f"/disputes/{dispute_id}/evidence")
+
+
+@app.post("/api/v1/disputes/{dispute_id}/evidence/images")
+async def disputes_evidence_image_upload_proxy(request: Request, dispute_id: str) -> Response:
+    return await proxy_deals(request, f"/disputes/{dispute_id}/evidence/images")
+
+
+@app.get("/api/v1/disputes/{dispute_id}/evidence/{evidence_id}/image")
+async def disputes_evidence_image_proxy(
+    request: Request,
+    dispute_id: str,
+    evidence_id: str,
+) -> Response:
+    return await proxy_deals(
+        request,
+        f"/disputes/{dispute_id}/evidence/{evidence_id}/image",
+    )
+
+
+@app.get("/api/v1/admin/disputes")
+async def disputes_admin_list_proxy(request: Request) -> Response:
+    return await proxy_deals(request, "/admin/disputes")
+
+
+@app.get("/api/v1/admin/disputes/{dispute_id}/audit")
+async def disputes_admin_audit_proxy(request: Request, dispute_id: str) -> Response:
+    return await proxy_deals(request, f"/admin/disputes/{dispute_id}/audit")
+
+
+@app.post("/api/v1/admin/disputes/{dispute_id}/request-evidence")
+async def disputes_admin_request_evidence_proxy(request: Request, dispute_id: str) -> Response:
+    return await proxy_deals(request, f"/admin/disputes/{dispute_id}/request-evidence")
+
+
+@app.post("/api/v1/admin/disputes/{dispute_id}/resolve")
+async def disputes_admin_resolve_proxy(request: Request, dispute_id: str) -> Response:
+    return await proxy_deals(request, f"/admin/disputes/{dispute_id}/resolve")
+
+
 async def proxy_payments(request: Request, path: str) -> Response:
     headers = {}
     for header in (

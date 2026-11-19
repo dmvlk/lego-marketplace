@@ -48,6 +48,36 @@ class OfferStatus(str, enum.Enum):
     REJECTED = "REJECTED"
 
 
+class DisputeReason(str, enum.Enum):
+    NOT_AS_DESCRIBED = "NOT_AS_DESCRIBED"
+    DAMAGED = "DAMAGED"
+    MISSING_PARTS = "MISSING_PARTS"
+    WRONG_ITEM = "WRONG_ITEM"
+    NOT_DELIVERED = "NOT_DELIVERED"
+    OTHER = "OTHER"
+
+
+class DisputeStatus(str, enum.Enum):
+    WAITING_SELLER = "WAITING_SELLER"
+    WAITING_BUYER = "WAITING_BUYER"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    RESOLVING = "RESOLVING"
+    RESOLVED = "RESOLVED"
+
+
+class EvidenceType(str, enum.Enum):
+    TEXT = "TEXT"
+    IMAGE = "IMAGE"
+    MESSAGE = "MESSAGE"
+    TRACKING = "TRACKING"
+
+
+class DisputeDecision(str, enum.Enum):
+    REFUND_BUYER = "REFUND_BUYER"
+    PAY_SELLER = "PAY_SELLER"
+    PARTIAL_REFUND = "PARTIAL_REFUND"
+
+
 class Deal(Base):
     __tablename__ = "deals"
 
@@ -143,6 +173,97 @@ class DealPayoutOutbox(Base):
         nullable=False,
     )
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Dispute(Base):
+    __tablename__ = "disputes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("deals.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    opened_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    reason: Mapped[DisputeReason] = mapped_column(Enum(DisputeReason), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[DisputeStatus] = mapped_column(Enum(DisputeStatus), nullable=False)
+    response_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deadline_missed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution: Mapped[DisputeDecision | None] = mapped_column(Enum(DisputeDecision))
+    refund_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    evidence: Mapped[list["DisputeEvidence"]] = relationship(
+        back_populates="dispute",
+        cascade="all, delete-orphan",
+        order_by="DisputeEvidence.created_at",
+    )
+
+
+class DisputeEvidence(Base):
+    __tablename__ = "dispute_evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    dispute_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("disputes.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    submitted_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    evidence_type: Mapped[EvidenceType] = mapped_column(Enum(EvidenceType), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    image_key: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    dispute: Mapped[Dispute] = relationship(back_populates="evidence")
+
+
+class DisputeAuditLog(Base):
+    __tablename__ = "dispute_audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    dispute_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("disputes.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DisputeResolutionOutbox(Base):
+    __tablename__ = "dispute_resolution_outbox"
+    __table_args__ = (
+        Index(
+            "ix_dispute_resolution_outbox_due",
+            "next_attempt_at",
+            postgresql_where=text("completed_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    dispute_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("disputes.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    decision: Mapped[DisputeDecision] = mapped_column(Enum(DisputeDecision), nullable=False)
+    refund_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     next_attempt_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
