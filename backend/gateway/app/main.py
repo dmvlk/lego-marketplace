@@ -11,6 +11,7 @@ app = FastAPI(
 
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8001").rstrip("/")
 CATALOG_SERVICE_URL = os.getenv("CATALOG_SERVICE_URL", "http://catalog-service:8002").rstrip("/")
+DEALS_SERVICE_URL = os.getenv("DEALS_SERVICE_URL", "http://deals-service:8003").rstrip("/")
 
 app.add_middleware(
     CORSMiddleware,
@@ -173,3 +174,79 @@ async def catalog_image_remove_proxy(request: Request, listing_id: str, image_id
 @app.get("/api/v1/catalog/images/{key:path}")
 async def catalog_image_proxy(request: Request, key: str) -> Response:
     return await proxy_catalog(request, f"/catalog/images/{key}")
+
+
+async def proxy_deals(request: Request, path: str) -> Response:
+    headers = {}
+    for header in ("authorization", "content-type", "accept"):
+        if value := request.headers.get(header):
+            headers[header.title()] = value
+    body = await request.body()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        upstream = await client.request(
+            request.method,
+            f"{DEALS_SERVICE_URL}{path}",
+            content=body,
+            headers=headers,
+            params=request.query_params,
+        )
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
+@app.get("/api/v1/offers")
+async def deals_list_offers_proxy(request: Request) -> Response:
+    return await proxy_deals(request, "/offers")
+
+
+@app.post("/api/v1/offers")
+async def deals_create_offer_proxy(request: Request) -> Response:
+    return await proxy_deals(request, "/offers")
+
+
+@app.post("/api/v1/offers/{offer_id}/counter")
+async def deals_counter_offer_proxy(request: Request, offer_id: str) -> Response:
+    return await proxy_deals(request, f"/offers/{offer_id}/counter")
+
+
+@app.post("/api/v1/offers/{offer_id}/reject")
+async def deals_reject_offer_proxy(request: Request, offer_id: str) -> Response:
+    return await proxy_deals(request, f"/offers/{offer_id}/reject")
+
+
+@app.post("/api/v1/offers/{offer_id}/accept")
+async def deals_accept_offer_proxy(request: Request, offer_id: str) -> Response:
+    return await proxy_deals(request, f"/offers/{offer_id}/accept")
+
+
+@app.post("/api/v1/deals")
+async def deals_create_proxy(request: Request) -> Response:
+    return await proxy_deals(request, "/deals")
+
+
+@app.get("/api/v1/deals/purchases")
+async def deals_purchases_proxy(request: Request) -> Response:
+    return await proxy_deals(request, "/deals/purchases")
+
+
+@app.get("/api/v1/deals/sales")
+async def deals_sales_proxy(request: Request) -> Response:
+    return await proxy_deals(request, "/deals/sales")
+
+
+@app.get("/api/v1/deals/{deal_id}")
+async def deals_detail_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_deals(request, f"/deals/{deal_id}")
+
+
+@app.post("/api/v1/deals/{deal_id}/confirm-offline")
+async def deals_confirm_offline_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_deals(request, f"/deals/{deal_id}/confirm-offline")
+
+
+@app.post("/api/v1/deals/{deal_id}/cancel")
+async def deals_cancel_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_deals(request, f"/deals/{deal_id}/cancel")

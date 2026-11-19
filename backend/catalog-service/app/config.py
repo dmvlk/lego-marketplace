@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     s3_access_key: str = "test"
     s3_secret_key: str = "test"
     max_image_size_bytes: int = 5 * 1024 * 1024
+    service_token: str = "replace-with-a-long-random-service-token"
 
 
 settings = Settings()

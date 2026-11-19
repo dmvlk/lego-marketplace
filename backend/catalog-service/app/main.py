@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import io
 import logging
 import re
@@ -8,10 +9,10 @@ from decimal import Decimal
 from uuid import UUID
 
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,6 +33,11 @@ from app.security import get_user_id
 from app.storage import delete_image, ensure_bucket, get_image, upload_image
 
 logger = logging.getLogger(__name__)
+
+
+def require_service_token(service_token: str | None) -> None:
+    if not service_token or not hmac.compare_digest(service_token, settings.service_token):
+        raise HTTPException(status_code=401, detail="Недействительный сервисный токен")
 
 
 @asynccontextmanager
@@ -66,6 +72,119 @@ def listing_response(listing: Listing) -> ListingResponse:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": "catalog"}
+
+
+@app.get("/internal/listings/{listing_id}")
+async def internal_listing(
+    listing_id: UUID,
+    x_service_token: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    require_service_token(x_service_token)
+    result = await db.execute(
+        select(Listing).options(selectinload(Listing.images)).where(Listing.id == listing_id)
+    )
+    listing = result.scalar_one_or_none()
+    if listing is None:
+        raise HTTPException(status_code=404, detail="Объявление не найдено")
+    return {
+        "id": listing.id,
+        "seller_id": listing.seller_id,
+        "title": listing.title,
+        "description": listing.description,
+        "price": listing.price,
+        "condition": listing.condition.value,
+        "completeness": listing.completeness,
+        "missing_parts": listing.missing_parts,
+        "has_box": listing.has_box,
+        "has_instructions": listing.has_instructions,
+        "known_defects": listing.known_defects,
+        "image_references": [image.object_reference for image in listing.images],
+        "status": listing.status.value,
+    }
+
+
+@app.post("/internal/listings/{listing_id}/reserve")
+async def reserve_listing(
+    listing_id: UUID,
+    deal_id: UUID,
+    x_service_token: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    require_service_token(x_service_token)
+    result = await db.execute(
+        update(Listing)
+        .where(Listing.id == listing_id, Listing.status == ListingStatus.ACTIVE)
+        .values(status=ListingStatus.RESERVED, reservation_deal_id=deal_id)
+        .returning(Listing)
+    )
+    listing = result.scalar_one_or_none()
+    if listing is None:
+        listing = await db.get(Listing, listing_id)
+        if listing is None:
+            raise HTTPException(status_code=404, detail="Объявление не найдено")
+        if listing.status != ListingStatus.RESERVED or listing.reservation_deal_id != deal_id:
+            raise HTTPException(status_code=409, detail="Объявление уже недоступно для сделки")
+    await db.commit()
+    return {"listing_id": listing.id, "deal_id": deal_id, "status": listing.status.value}
+
+
+@app.post("/internal/listings/{listing_id}/release")
+async def release_listing(
+    listing_id: UUID,
+    deal_id: UUID,
+    x_service_token: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    require_service_token(x_service_token)
+    result = await db.execute(
+        update(Listing)
+        .where(
+            Listing.id == listing_id,
+            Listing.status == ListingStatus.RESERVED,
+            Listing.reservation_deal_id == deal_id,
+        )
+        .values(status=ListingStatus.ACTIVE, reservation_deal_id=None)
+        .returning(Listing.id)
+    )
+    if result.scalar_one_or_none() is not None:
+        await db.commit()
+        return {"listing_id": listing_id, "status": "ACTIVE"}
+    listing = await db.get(Listing, listing_id)
+    if listing is None:
+        raise HTTPException(status_code=404, detail="Объявление не найдено")
+    if listing.status == ListingStatus.ACTIVE and listing.reservation_deal_id is None:
+        return {"listing_id": listing_id, "status": "ACTIVE"}
+    raise HTTPException(status_code=409, detail="Сделка не владеет резервом объявления")
+
+
+@app.post("/internal/listings/{listing_id}/sold")
+async def mark_listing_sold(
+    listing_id: UUID,
+    deal_id: UUID,
+    x_service_token: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    require_service_token(x_service_token)
+    result = await db.execute(
+        update(Listing)
+        .where(
+            Listing.id == listing_id,
+            Listing.status == ListingStatus.RESERVED,
+            Listing.reservation_deal_id == deal_id,
+        )
+        .values(status=ListingStatus.SOLD)
+        .returning(Listing.id)
+    )
+    if result.scalar_one_or_none() is not None:
+        await db.commit()
+        return {"listing_id": listing_id, "status": "SOLD"}
+    listing = await db.get(Listing, listing_id)
+    if listing is None:
+        raise HTTPException(status_code=404, detail="Объявление не найдено")
+    if listing.status == ListingStatus.SOLD and listing.reservation_deal_id == deal_id:
+        return {"listing_id": listing_id, "status": "SOLD"}
+    raise HTTPException(status_code=409, detail="Сделка не владеет резервом объявления")
 
 
 @app.get("/catalog/categories")

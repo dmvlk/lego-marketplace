@@ -49,6 +49,7 @@ class Listing(Base):
     seller_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
     category_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("categories.id"), nullable=False)
     theme_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("themes.id"))
+    reservation_deal_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, unique=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)

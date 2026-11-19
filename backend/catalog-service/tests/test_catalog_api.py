@@ -1,11 +1,42 @@
+import asyncio
 import io
+import os
 import uuid
 
+import asyncpg
 import httpx
+import pytest
 from PIL import Image
 
 
 BASE_URL = "http://gateway:8000/api/v1"
+
+
+async def cleanup_test_records(suffix: str, listing_id: str | None) -> None:
+    database_url = os.environ["DATABASE_URL"].replace("+asyncpg", "")
+    catalog_db = await asyncpg.connect(database_url)
+    try:
+        if listing_id:
+            await catalog_db.execute("DELETE FROM listings WHERE id = $1", uuid.UUID(listing_id))
+    finally:
+        await catalog_db.close()
+
+    auth_db = await asyncpg.connect(database_url.replace("/catalog_db", "/auth_db"))
+    try:
+        await auth_db.execute(
+            "DELETE FROM users WHERE email = ANY($1::text[])",
+            [f"seller_{suffix}@example.com", f"buyer_{suffix}@example.com"],
+        )
+    finally:
+        await auth_db.close()
+
+
+@pytest.fixture
+def cleanup_records(request):
+    suffix = uuid.uuid4().hex[:10]
+    state = {"listing_id": None}
+    request.addfinalizer(lambda: asyncio.run(cleanup_test_records(suffix, state["listing_id"])))
+    return suffix, state
 
 
 def register_user(client: httpx.Client, name: str, suffix: str) -> dict:
@@ -21,8 +52,8 @@ def register_user(client: httpx.Client, name: str, suffix: str) -> dict:
     return response.json()
 
 
-def test_catalog_listing_flow() -> None:
-    suffix = uuid.uuid4().hex[:10]
+def test_catalog_listing_flow(cleanup_records) -> None:
+    suffix, cleanup_state = cleanup_records
     with httpx.Client(timeout=15.0) as client:
         categories = client.get(f"{BASE_URL}/catalog/categories")
         themes = client.get(f"{BASE_URL}/catalog/themes")
@@ -49,6 +80,7 @@ def test_catalog_listing_flow() -> None:
         )
         assert created.status_code == 201
         listing_id = created.json()["id"]
+        cleanup_state["listing_id"] = listing_id
 
         image_buffer = io.BytesIO()
         Image.new("RGB", (4, 4), "red").save(image_buffer, format="PNG")
