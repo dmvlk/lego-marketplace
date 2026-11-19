@@ -13,6 +13,7 @@ AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8001").rst
 CATALOG_SERVICE_URL = os.getenv("CATALOG_SERVICE_URL", "http://catalog-service:8002").rstrip("/")
 DEALS_SERVICE_URL = os.getenv("DEALS_SERVICE_URL", "http://deals-service:8003").rstrip("/")
 PAYMENT_SERVICE_URL = os.getenv("PAYMENT_SERVICE_URL", "http://payment-service:8004").rstrip("/")
+DELIVERY_SERVICE_URL = os.getenv("DELIVERY_SERVICE_URL", "http://delivery-service:8005").rstrip("/")
 
 app.add_middleware(
     CORSMiddleware,
@@ -253,6 +254,11 @@ async def deals_cancel_proxy(request: Request, deal_id: str) -> Response:
     return await proxy_deals(request, f"/deals/{deal_id}/cancel")
 
 
+@app.post("/api/v1/deals/{deal_id}/inspection/confirm")
+async def deals_inspection_confirm_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_deals(request, f"/deals/{deal_id}/inspection/confirm")
+
+
 async def proxy_payments(request: Request, path: str) -> Response:
     headers = {}
     for header in (
@@ -293,3 +299,49 @@ async def payments_webhook_proxy(request: Request, provider_name: str) -> Respon
 @app.get("/api/v1/payments/{payment_id}")
 async def payments_get_proxy(request: Request, payment_id: str) -> Response:
     return await proxy_payments(request, f"/payments/{payment_id}")
+
+
+async def proxy_delivery(request: Request, path: str) -> Response:
+    headers = {}
+    for header in ("authorization", "content-type", "accept"):
+        if value := request.headers.get(header):
+            headers[header.title()] = value
+    body = await request.body()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        upstream = await client.request(
+            request.method,
+            f"{DELIVERY_SERVICE_URL}{path}",
+            content=body,
+            headers=headers,
+            params=request.query_params,
+        )
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
+@app.post("/api/v1/deliveries/deals/{deal_id}/ship")
+async def delivery_ship_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_delivery(request, f"/deliveries/deals/{deal_id}/ship")
+
+
+@app.get("/api/v1/deliveries/deals/{deal_id}")
+async def delivery_get_by_deal_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_delivery(request, f"/deliveries/deals/{deal_id}")
+
+
+@app.get("/api/v1/deliveries/{shipment_id}")
+async def delivery_get_proxy(request: Request, shipment_id: str) -> Response:
+    return await proxy_delivery(request, f"/deliveries/{shipment_id}")
+
+
+@app.patch("/api/v1/deliveries/{shipment_id}/tracking")
+async def delivery_tracking_proxy(request: Request, shipment_id: str) -> Response:
+    return await proxy_delivery(request, f"/deliveries/{shipment_id}/tracking")
+
+
+@app.post("/api/v1/deliveries/{shipment_id}/delivered")
+async def delivery_delivered_proxy(request: Request, shipment_id: str) -> Response:
+    return await proxy_delivery(request, f"/deliveries/{shipment_id}/delivered")

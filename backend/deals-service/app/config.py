@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +10,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     catalog_service_url: str = "http://localhost:8002"
     service_token: str = "replace-with-a-long-random-service-token"
+    payment_service_url: str = "http://localhost:8004"
+    inspection_period_hours: int = Field(default=48, ge=1, le=720)
 
 
 settings = Settings()

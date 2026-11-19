@@ -8,12 +8,15 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
+    Integer,
     JSON,
     Numeric,
     String,
     Text,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -61,6 +64,8 @@ class Deal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    inspection_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    shipment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, unique=True)
 
     snapshot: Mapped["DealListingSnapshot"] = relationship(
         back_populates="deal",
@@ -119,3 +124,31 @@ class DealStatusHistory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     deal: Mapped[Deal] = relationship(back_populates="status_history")
+
+
+class DealPayoutOutbox(Base):
+    __tablename__ = "deal_payout_outbox"
+    __table_args__ = (
+        Index(
+            "ix_deal_payout_outbox_due",
+            "next_attempt_at",
+            postgresql_where=text("completed_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("deals.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

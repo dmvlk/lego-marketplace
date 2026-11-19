@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -18,6 +19,10 @@ class CounterOfferCreate(BaseModel):
 class DealCreate(BaseModel):
     listing_id: UUID
     transaction_type: TransactionType
+
+
+class ShipmentEventRequest(BaseModel):
+    shipment_id: UUID
 
 
 class OfferResponse(BaseModel):
@@ -63,3 +68,5 @@ class DealResponse(BaseModel):
     buyer_confirmed: bool
     seller_confirmed: bool
     snapshot: DealSnapshotResponse
+    inspection_deadline_at: datetime | None
+    shipment_id: UUID | None
