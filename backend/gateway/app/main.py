@@ -29,6 +29,7 @@ DEALS_SERVICE_URL = os.getenv("DEALS_SERVICE_URL", "http://deals-service:8003").
 PAYMENT_SERVICE_URL = os.getenv("PAYMENT_SERVICE_URL", "http://payment-service:8004").rstrip("/")
 DELIVERY_SERVICE_URL = os.getenv("DELIVERY_SERVICE_URL", "http://delivery-service:8005").rstrip("/")
 CHAT_SERVICE_URL = os.getenv("CHAT_SERVICE_URL", "http://chat-service:8006").rstrip("/")
+REVIEWS_SERVICE_URL = os.getenv("REVIEWS_SERVICE_URL", "http://reviews-service:8007").rstrip("/")
 
 app.add_middleware(
     CORSMiddleware,
@@ -387,6 +388,37 @@ async def proxy_delivery(request: Request, path: str) -> Response:
         status_code=upstream.status_code,
         media_type=upstream.headers.get("content-type"),
     )
+
+
+async def proxy_reviews(request: Request, path: str) -> Response:
+    headers = {}
+    for header in ("authorization", "content-type", "accept"):
+        if value := request.headers.get(header):
+            headers[header.title()] = value
+    body = await request.body()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        upstream = await client.request(
+            request.method,
+            f"{REVIEWS_SERVICE_URL}{path}",
+            content=body,
+            headers=headers,
+            params=request.query_params,
+        )
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
+@app.post("/api/v1/deals/{deal_id}/review")
+async def review_create_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_reviews(request, f"/deals/{deal_id}/review")
+
+
+@app.get("/api/v1/users/{seller_id}/reviews")
+async def user_reviews_proxy(request: Request, seller_id: str) -> Response:
+    return await proxy_reviews(request, f"/users/{seller_id}/reviews")
 
 
 @app.post("/api/v1/deliveries/deals/{deal_id}/ship")

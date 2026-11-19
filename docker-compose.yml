@@ -90,6 +90,27 @@ services:
       timeout: 5s
       retries: 20
 
+  reviews-service:
+    build:
+      context: ./backend/reviews-service
+    environment:
+      DATABASE_URL: postgresql+asyncpg://lego:lego_password@postgres:5432/reviews_db
+      JWT_SECRET: ${JWT_SECRET:-replace-with-a-long-random-secret}
+      DEALS_SERVICE_URL: http://deals-service:8003
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-replace-with-a-long-random-service-token}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      deals-service:
+        condition: service_healthy
+    ports:
+      - "8007:8007"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8007/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   payment-service:
     build:
       context: ./backend/payment-service
@@ -169,6 +190,7 @@ services:
       PAYMENT_SERVICE_URL: http://payment-service:8004
       DELIVERY_SERVICE_URL: http://delivery-service:8005
       CHAT_SERVICE_URL: http://chat-service:8006
+      REVIEWS_SERVICE_URL: http://reviews-service:8007
     depends_on:
       postgres:
         condition: service_healthy
@@ -187,6 +209,8 @@ services:
       delivery-service:
         condition: service_healthy
       chat-service:
+        condition: service_healthy
+      reviews-service:
         condition: service_healthy
     ports:
       - "8000:8000"

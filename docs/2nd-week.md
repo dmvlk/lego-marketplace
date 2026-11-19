@@ -10,25 +10,25 @@
 - Gateway отвечает на `/api/v1/health`;
 - LocalStack сообщает, что сервис S3 доступен;
 - PostgreSQL содержит все семь изолированных баз сервисов;
-- конфигурация проходит `docker compose config --quiet`.
+- конфигурация проходит `docker compose config --quiet`
 
 ## Состав Docker Compose
 
-- PostgreSQL 16 — реляционные данные.
-- RabbitMQ 3 с management-интерфейсом — доменные события.
-- Redis 7 — кеширование, временное состояние и ограничение частоты запросов.
-- LocalStack с сервисом S3 — совместимое с S3 хранилище изображений.
-- API Gateway на FastAPI — публичная точка входа.
+- PostgreSQL 16 - реляционные данные
+- RabbitMQ 3 с management-интерфейсом - доменные события
+- Redis 7 - кеширование, временное состояние и ограничение частоты запросов
+- LocalStack с сервисом S3 - совместимое с S3 хранилище изображений
+- API Gateway на FastAPI - публичная точка входа
 
 PostgreSQL при первом запуске создаёт изолированные логические базы:
 
-- `auth_db`.
-- `catalog_db`.
-- `deals_db`.
-- `payment_db`.
-- `delivery_db`.
-- `chat_db`.
-- `reviews_db`.
+- `auth_db`
+- `catalog_db`
+- `deals_db`
+- `payment_db`
+- `delivery_db`
+- `chat_db`
+- `reviews_db`
 
 Микросервисы не будут обращаться к чужим базам и будут использовать только собственные базы или схемы.
 
@@ -45,8 +45,8 @@ backend/gateway/
 
 Gateway предоставляет базовые health-эндпоинты:
 
-- `GET /api/v1/health`.
-- `GET /api/v1`.
+- `GET /api/v1/health`
+- `GET /api/v1`
 
 В данном этапе Gateway не содержит маршруты бизнес-сервисов: они будут добавляться по мере создания сервисов.
 
@@ -75,8 +75,8 @@ curl http://localhost:8000/api/v1/health
 
 Проверить веб-интерфейсы инфраструктуры:
 
-- RabbitMQ: `http://localhost:15672`.
-- S3 endpoint: `http://localhost:4566`.
+- RabbitMQ: `http://localhost:15672`
+- S3 endpoint: `http://localhost:4566`
 
 ## Проверка остановки и перезапуска
 
@@ -112,7 +112,7 @@ docker compose ps
 - ротация refresh-токена;
 - повторное использование старого refresh-токена отклоняется;
 - выход отзывает refresh-токен;
-- маршрутизация через Gateway на порту `8000`.
+- маршрутизация через Gateway на порту `8000`
 
 ## Сервис каталога
 
@@ -129,22 +129,22 @@ docker compose ps
 - загрузка до 10 изображений на объявление;
 - проверка формата JPEG/PNG/WebP, размера до 5 МБ и разрешения;
 - хранение изображений в S3 через LocalStack;
-- просмотр и удаление изображения через Gateway.
+- просмотр и удаление изображения через Gateway
 
 При первой миграции создаются три категории и темы City, Star Wars, Technic, NINJAGO, Creator, Friends и Architecture.
 
 Основные публичные маршруты:
 
-- `GET /api/v1/catalog/categories`.
-- `GET /api/v1/catalog/themes`.
-- `GET /api/v1/catalog/listings`.
-- `GET /api/v1/catalog/favorites`.
-- `POST /api/v1/catalog/listings`.
-- `GET`, `PATCH`, `DELETE /api/v1/catalog/listings/{id}`.
-- `POST /api/v1/catalog/listings/{id}/images`.
-- `GET /api/v1/catalog/images/{key}`.
-- `DELETE /api/v1/catalog/listings/{id}/images/{image_id}`.
-- `POST`, `DELETE /api/v1/catalog/listings/{id}/favorites`.
+- `GET /api/v1/catalog/categories`
+- `GET /api/v1/catalog/themes`
+- `GET /api/v1/catalog/listings`
+- `GET /api/v1/catalog/favorites`
+- `POST /api/v1/catalog/listings`
+- `GET`, `PATCH`, `DELETE /api/v1/catalog/listings/{id}`
+- `POST /api/v1/catalog/listings/{id}/images`
+- `GET /api/v1/catalog/images/{key}`
+- `DELETE /api/v1/catalog/listings/{id}/images/{image_id}`
+- `POST`, `DELETE /api/v1/catalog/listings/{id}/favorites`
 
 Интеграционный тест проверяет создание объявления и фото, поиск, избранное, ограничения доступа и архивирование.
 
@@ -159,7 +159,7 @@ docker compose ps
 - офлайн-сделка завершается только после подтверждения покупателя и продавца;
 - отмена до завершения освобождает объявление;
 - покупки и продажи видны только участникам сделок;
-- снимок сохраняет описание, цену, состояние, комплектность и изображения.
+- снимок сохраняет описание, цену, состояние, комплектность и изображения
 
 `ONLINE_PROTECTED` пока создает сделку в состоянии `AWAITING_PAYMENT`. Платежи, доставка, споры и события RabbitMQ будут подключены отдельными этапами. Это состояние не означает, что деньги приняты или удерживаются.
 
@@ -174,7 +174,7 @@ docker compose ps
 - платежи, возвраты, выплаты и события провайдера сохраняются отдельно;
 - повторная обработка вебхука защищена подписью и идемпотентностью;
 - авторизация Mock-платежа переводит сделку в `PAID`;
-- операции возврата и выплаты доступны сервисам через закрытые внутренние маршруты.
+- операции возврата и выплаты доступны сервисам через закрытые внутренние маршруты
 
 Публичные маршруты: `POST /api/v1/payments/deals/{deal_id}`, `POST /api/v1/payments/webhooks/{provider}` и `GET /api/v1/payments/{payment_id}`. Автоматическая выплата после доставки и инспекционного периода подключена через сервис сделок.
 
@@ -201,3 +201,11 @@ docker compose ps
 Администратор выбирает полный возврат, выплату продавцу или частичный возврат. Решение и действия администратора сохраняются в аудите. Возврат и выплата выполняются через закрытые API платежного сервиса и долговечную очередь с идемпотентными ключами; частичный возврат выполняется до выплаты остатка. Роль `ADMIN` не выдается публичной регистрацией: ее назначают существующему пользователю отдельно, после чего нужно получить новый access-токен.
 
 Публичные маршруты: `POST /api/v1/deals/{deal_id}/disputes`, `GET /api/v1/disputes/{dispute_id}`, `POST /api/v1/disputes/{dispute_id}/evidence`, `POST /api/v1/disputes/{dispute_id}/evidence/images`, `GET /api/v1/admin/disputes`, `POST /api/v1/admin/disputes/{dispute_id}/request-evidence` и `POST /api/v1/admin/disputes/{dispute_id}/resolve`.
+
+## Сервис отзывов
+
+Добавлен `reviews-service` с отдельной базой `reviews_db`. Отзыв доступен только покупателю завершенной сделки после закрытия спора, если он был. Ограничение уникальности в БД не позволяет оставить более одного отзыва по сделке. Оценка принимает значения от 1 до 5, текстовый комментарий необязателен.
+
+Публичный список отзывов продавца содержит общее число отзывов, средний рейтинг и записи с пагинацией. Рейтинг вычисляется по сохраненным оценкам и не изменяется в сервисе авторизации.
+
+Маршруты: `POST /api/v1/deals/{deal_id}/review` и `GET /api/v1/users/{seller_id}/reviews`.

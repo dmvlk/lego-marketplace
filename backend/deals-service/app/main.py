@@ -574,6 +574,9 @@ async def internal_payment_context(
     deal = await db.get(Deal, deal_id)
     if deal is None:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
+    dispute_status = await db.scalar(
+        select(Dispute.status).where(Dispute.deal_id == deal.id)
+    )
     return {
         "id": str(deal.id),
         "buyer_id": str(deal.buyer_id),
@@ -581,6 +584,7 @@ async def internal_payment_context(
         "amount": str(deal.agreed_price),
         "transaction_type": deal.transaction_type.value,
         "status": deal.status.value,
+        "dispute_status": dispute_status.value if dispute_status else None,
     }
 
 
