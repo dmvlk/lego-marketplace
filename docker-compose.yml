@@ -62,6 +62,27 @@ services:
       timeout: 5s
       retries: 20
 
+  chat-service:
+    build:
+      context: ./backend/chat-service
+    environment:
+      DATABASE_URL: postgresql+asyncpg://lego:lego_password@postgres:5432/chat_db
+      JWT_SECRET: ${JWT_SECRET:-replace-with-a-long-random-secret}
+      CATALOG_SERVICE_URL: http://catalog-service:8002
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-replace-with-a-long-random-service-token}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+    ports:
+      - "8006:8006"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8006/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   payment-service:
     build:
       context: ./backend/payment-service
@@ -140,6 +161,7 @@ services:
       DEALS_SERVICE_URL: http://deals-service:8003
       PAYMENT_SERVICE_URL: http://payment-service:8004
       DELIVERY_SERVICE_URL: http://delivery-service:8005
+      CHAT_SERVICE_URL: http://chat-service:8006
     depends_on:
       postgres:
         condition: service_healthy
@@ -156,6 +178,8 @@ services:
       payment-service:
         condition: service_healthy
       delivery-service:
+        condition: service_healthy
+      chat-service:
         condition: service_healthy
     ports:
       - "8000:8000"
