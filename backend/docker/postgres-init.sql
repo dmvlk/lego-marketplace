@@ -1,0 +1,7 @@
+CREATE DATABASE auth_db;
+CREATE DATABASE catalog_db;
+CREATE DATABASE deals_db;
+CREATE DATABASE payment_db;
+CREATE DATABASE delivery_db;
+CREATE DATABASE chat_db;
+CREATE DATABASE reviews_db;
