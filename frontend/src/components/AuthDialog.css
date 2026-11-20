@@ -1,0 +1,240 @@
+.auth-dialog {
+  width: min(440px, calc(100% - 32px));
+  max-width: 440px;
+  max-height: calc(100% - 32px);
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.auth-dialog::backdrop {
+  background: rgb(30 30 27 / 48%);
+  backdrop-filter: blur(4px);
+}
+
+.auth-dialog-card {
+  position: relative;
+  padding: 34px;
+  border: 1px solid rgb(40 38 32 / 6%);
+  border-radius: 20px;
+  background: var(--paper);
+  box-shadow: 0 22px 65px rgb(22 22 17 / 23%);
+}
+
+.dialog-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: #f3f1ec;
+  color: #77756e;
+  cursor: pointer;
+  font-size: 21px;
+  line-height: 1;
+}
+
+.dialog-close:hover {
+  background: #e9e6de;
+  color: var(--ink);
+}
+
+.dialog-brand-mark {
+  display: flex;
+  width: 40px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  margin-bottom: 20px;
+  border-radius: 9px;
+  background: var(--yellow);
+  box-shadow: inset 0 -4px 0 rgb(0 0 0 / 9%);
+}
+
+.dialog-brand-mark span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffe989;
+  box-shadow: 0 2px 0 rgb(0 0 0 / 13%);
+}
+
+.dialog-eyebrow {
+  margin: 0 0 9px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.13em;
+}
+
+.auth-dialog h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 25px;
+  font-weight: 720;
+  letter-spacing: -0.045em;
+  line-height: 1.15;
+}
+
+.dialog-description {
+  margin: 9px 0 23px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.auth-dialog-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 21px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #f3f1ec;
+}
+
+.auth-dialog-tab {
+  min-height: 37px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #77756e;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.auth-dialog-tab.active {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 2px 6px rgb(42 38 25 / 9%);
+}
+
+.auth-dialog-form {
+  display: grid;
+  gap: 16px;
+}
+
+.auth-dialog-field {
+  display: grid;
+  gap: 7px;
+  color: #45443f;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.auth-dialog-field input {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 13px;
+  border: 1px solid #e8e5de;
+  border-radius: 9px;
+  outline: none;
+  background: #fffefa;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 450;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.auth-dialog-field input::placeholder {
+  color: #aaa79f;
+}
+
+.auth-dialog-field input:focus {
+  border-color: #e2a936;
+  box-shadow: 0 0 0 3px rgb(242 191 67 / 17%);
+}
+
+.auth-dialog-field small {
+  color: #89867e;
+  font-size: 10px;
+  font-weight: 450;
+}
+
+.auth-dialog-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #f1d0cc;
+  border-radius: 8px;
+  background: #fff3f1;
+  color: #a42e27;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.auth-dialog-submit {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--red);
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  transition: background 150ms ease, transform 150ms ease;
+}
+
+.auth-dialog-submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: #cc332d;
+}
+
+.auth-dialog-submit:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.auth-dialog-submit span {
+  font-size: 16px;
+}
+
+.auth-dialog-retry {
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8d5f09;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.auth-dialog-retry:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.auth-dialog-footnote {
+  margin: 18px 0 0;
+  color: #939088;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+@media (max-width: 560px) {
+  .auth-dialog-card {
+    padding: 28px 22px;
+  }
+}

@@ -1,0 +1,129 @@
+.profile-dialog {
+  width: min(440px, calc(100% - 28px));
+  max-width: 440px;
+  padding: 0;
+  border: 0;
+  border-radius: 15px;
+  background: transparent;
+  color: var(--ink);
+}
+
+.profile-dialog::backdrop {
+  background: rgb(30 30 27 / 48%);
+  backdrop-filter: blur(4px);
+}
+
+.profile-dialog-card {
+  position: relative;
+  display: grid;
+  gap: 13px;
+  padding: 28px;
+  border: 1px solid rgb(40 38 32 / 6%);
+  border-radius: 15px;
+  background: var(--paper);
+  box-shadow: 0 22px 65px rgb(22 22 17 / 23%);
+}
+
+.profile-dialog-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid rgb(50 48 42 / 8%);
+  border-radius: 50%;
+  background: #fffefa;
+  color: #65625b;
+  cursor: pointer;
+  font-size: 19px;
+}
+
+.profile-dialog-eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.13em;
+}
+
+.profile-dialog-card h2 {
+  margin: 0;
+  font-size: 23px;
+  letter-spacing: -0.05em;
+}
+
+.profile-dialog-email {
+  margin: -7px 0 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.profile-avatar-preview {
+  width: 66px;
+  height: 66px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.profile-dialog-field {
+  display: grid;
+  gap: 6px;
+  color: #69665d;
+  font-size: 10px;
+}
+
+.profile-dialog-field input {
+  min-height: 39px;
+  padding: 8px 11px;
+  border: 1px solid #e6e1d6;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+}
+
+.profile-dialog-error {
+  margin: 0;
+  color: #a42e27;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.profile-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.profile-dialog-primary,
+.profile-dialog-secondary {
+  min-height: 37px;
+  padding: 0 13px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.profile-dialog-primary {
+  background: var(--red);
+  color: #fff;
+}
+
+.profile-dialog-secondary {
+  border-color: var(--line);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.profile-dialog-primary:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
