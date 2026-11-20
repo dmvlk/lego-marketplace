@@ -149,6 +149,11 @@ async def catalog_favorites_proxy(request: Request) -> Response:
     return await proxy_catalog(request, "/catalog/favorites")
 
 
+@app.get("/api/v1/catalog/my-listings")
+async def catalog_my_listings_proxy(request: Request) -> Response:
+    return await proxy_catalog(request, "/catalog/my-listings")
+
+
 @app.post("/api/v1/catalog/listings")
 async def catalog_create_proxy(request: Request) -> Response:
     return await proxy_catalog(request, "/catalog/listings")
@@ -258,6 +263,11 @@ async def deals_sales_proxy(request: Request) -> Response:
 @app.get("/api/v1/deals/{deal_id}")
 async def deals_detail_proxy(request: Request, deal_id: str) -> Response:
     return await proxy_deals(request, f"/deals/{deal_id}")
+
+
+@app.get("/api/v1/deals/{deal_id}/dispute")
+async def deals_dispute_proxy(request: Request, deal_id: str) -> Response:
+    return await proxy_deals(request, f"/deals/{deal_id}/dispute")
 
 
 @app.post("/api/v1/deals/{deal_id}/confirm-offline")

@@ -273,6 +273,30 @@ async def list_favorites(
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
+@app.get("/catalog/my-listings")
+async def list_my_listings(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    user_id: UUID = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    base_query = (
+        select(Listing)
+        .options(selectinload(Listing.images))
+        .where(Listing.seller_id == user_id)
+    )
+    total = (
+        await db.execute(select(func.count()).select_from(base_query.subquery()))
+    ).scalar_one()
+    result = await db.execute(
+        base_query.order_by(Listing.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    items = [listing_response(item) for item in result.scalars()]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
 @app.get("/catalog/listings/{listing_id}", response_model=ListingResponse)
 async def get_listing(listing_id: UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -349,7 +373,7 @@ async def upload_listing_image(
             image_format = image.format
             width, height = image.size
             image.verify()
-    except (UnidentifiedImageError, OSError):
+    except (UnidentifiedImageError, OSError, SyntaxError):
         raise HTTPException(status_code=415, detail="Файл не является корректным изображением")
     if image_format not in {"JPEG", "PNG", "WEBP"}:
         raise HTTPException(status_code=415, detail="Поддерживаются только JPEG, PNG и WebP")

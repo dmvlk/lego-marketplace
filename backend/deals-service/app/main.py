@@ -1279,6 +1279,26 @@ async def get_deal(
     return deal
 
 
+@app.get("/deals/{deal_id}/dispute", response_model=DisputeResponse | None)
+async def get_deal_dispute(
+    deal_id: UUID,
+    user_id: UUID = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    deal = await load_deal(db, deal_id)
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    if user_id not in {deal.buyer_id, deal.seller_id}:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой сделке")
+    dispute_id = await db.scalar(select(Dispute.id).where(Dispute.deal_id == deal.id))
+    if dispute_id is None:
+        return None
+    dispute = await load_dispute(db, dispute_id)
+    if dispute is None:
+        raise HTTPException(status_code=404, detail="Спор не найден")
+    return dispute_response(dispute)
+
+
 @app.post("/deals/{deal_id}/confirm-offline", response_model=DealResponse)
 async def confirm_offline_deal(
     deal_id: UUID,

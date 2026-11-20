@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import io
 import os
 import uuid
@@ -81,6 +82,30 @@ def test_catalog_listing_flow(cleanup_records) -> None:
         assert created.status_code == 201
         listing_id = created.json()["id"]
         cleanup_state["listing_id"] = listing_id
+
+        malformed_png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/VKkAAAAASUVORK5CYII="
+        )
+        invalid_upload = client.post(
+            f"{BASE_URL}/catalog/listings/{listing_id}/images",
+            headers=seller_headers,
+            files={"file": ("broken.png", malformed_png, "image/png")},
+        )
+        assert invalid_upload.status_code == 415
+
+        seller_listings = client.get(
+            f"{BASE_URL}/catalog/my-listings",
+            headers=seller_headers,
+        )
+        buyer_listings = client.get(
+            f"{BASE_URL}/catalog/my-listings",
+            headers=buyer_headers,
+        )
+        assert seller_listings.status_code == 200
+        assert seller_listings.json()["total"] == 1
+        assert seller_listings.json()["items"][0]["id"] == listing_id
+        assert buyer_listings.status_code == 200
+        assert buyer_listings.json()["total"] == 0
 
         image_buffer = io.BytesIO()
         Image.new("RGB", (4, 4), "red").save(image_buffer, format="PNG")

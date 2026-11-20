@@ -161,7 +161,7 @@ async def update_profile(
 ):
     if payload.display_name is not None:
         user.display_name = payload.display_name
-    if payload.avatar_reference is not None:
+    if "avatar_reference" in payload.model_fields_set:
         user.avatar_reference = payload.avatar_reference
     await db.commit()
     await db.refresh(user)

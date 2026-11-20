@@ -138,6 +138,7 @@ docker compose ps
 - `GET /api/v1/catalog/categories`
 - `GET /api/v1/catalog/themes`
 - `GET /api/v1/catalog/listings`
+- `GET /api/v1/catalog/my-listings`
 - `GET /api/v1/catalog/favorites`
 - `POST /api/v1/catalog/listings`
 - `GET`, `PATCH`, `DELETE /api/v1/catalog/listings/{id}`
@@ -146,7 +147,7 @@ docker compose ps
 - `DELETE /api/v1/catalog/listings/{id}/images/{image_id}`
 - `POST`, `DELETE /api/v1/catalog/listings/{id}/favorites`
 
-Интеграционный тест проверяет создание объявления и фото, поиск, избранное, ограничения доступа и архивирование.
+Интеграционный тест проверяет создание и управление своими объявлениями, загрузку фото, поиск, избранное, ограничения доступа и архивирование.
 
 ## Сервис сделок
 
